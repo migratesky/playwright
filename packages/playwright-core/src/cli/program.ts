@@ -357,16 +357,11 @@ async function launchContext(options: Options, headless: boolean, executablePath
   launchOptions.handleSIGINT = false;
 
   const contextOptions: BrowserContextOptions =
-    // Copy the device descriptor since we have to compare and modify the options.
     options.device ? { ...playwright.devices[options.device] } : {};
 
-  // In headful mode, use host device scale factor for things to look nice.
-  // In headless, keep things the way it works in Playwright by default.
-  // Assume high-dpi on MacOS. TODO: this is not perfect.
   if (!headless)
     contextOptions.deviceScaleFactor = os.platform() === 'darwin' ? 2 : 1;
 
-  // Work around the WebKit GTK scrolling issue.
   if (browserType.name() === 'webkit' && process.platform === 'linux') {
     delete contextOptions.hasTouch;
     delete contextOptions.isMobile;
@@ -378,8 +373,6 @@ async function launchContext(options: Options, headless: boolean, executablePath
   if (options.blockServiceWorkers)
     contextOptions.serviceWorkers = 'block';
 
-  // Proxy
-
   if (options.proxyServer) {
     launchOptions.proxy = {
       server: options.proxyServer
@@ -388,7 +381,18 @@ async function launchContext(options: Options, headless: boolean, executablePath
       launchOptions.proxy.bypass = options.proxyBypass;
   }
 
-  const browser = await browserType.launch(launchOptions);
+  // Connect to the existing browser instance
+  const browser = await browserType.connectOverCDP({
+    endpointURL: `http://127.0.0.1:9222/`,
+  });
+
+  // Reuse existing context or create a new one
+  let context: import('playwright-core').BrowserContext;
+  context = browser.contexts()[0];
+  // if (browser.contexts().length > 0) {
+  // } else {
+  //   context = await browser.newContext(contextOptions);
+  // }
 
   if (process.env.PWTEST_CLI_IS_UNDER_TEST) {
     (process as any)._didSetSourcesForTest = (text: string) => {
@@ -399,8 +403,6 @@ async function launchContext(options: Options, headless: boolean, executablePath
       if (autoExitCondition && text.includes(autoExitCondition))
         Promise.all(context.pages().map(async p => p.close()));
     };
-    // Make sure we exit abnormally when browser crashes.
-    const logs: string[] = [];
     require('playwright-core/lib/utilsBundle').debug.log = (...args: any[]) => {
       const line = require('util').format(...args) + '\n';
       logs.push(line);
@@ -415,7 +417,6 @@ async function launchContext(options: Options, headless: boolean, executablePath
     });
   }
 
-  // Viewport size
   if (options.viewportSize) {
     try {
       const [width, height] = options.viewportSize.split(',').map(n => parseInt(n, 10));
@@ -424,8 +425,6 @@ async function launchContext(options: Options, headless: boolean, executablePath
       throw new Error('Invalid viewport size format: use "width, height", for example --viewport-size=800,600');
     }
   }
-
-  // Geolocation
 
   if (options.geolocation) {
     try {
@@ -440,35 +439,23 @@ async function launchContext(options: Options, headless: boolean, executablePath
     contextOptions.permissions = ['geolocation'];
   }
 
-  // User agent
-
   if (options.userAgent)
     contextOptions.userAgent = options.userAgent;
-
-  // Lang
 
   if (options.lang)
     contextOptions.locale = options.lang;
 
-  // Color scheme
-
   if (options.colorScheme)
     contextOptions.colorScheme = options.colorScheme as 'dark' | 'light';
 
-  // Timezone
-
   if (options.timezone)
     contextOptions.timezoneId = options.timezone;
-
-  // Storage
 
   if (options.loadStorage)
     contextOptions.storageState = options.loadStorage;
 
   if (options.ignoreHttpsErrors)
     contextOptions.ignoreHTTPSErrors = true;
-
-  // HAR
 
   if (options.saveHar) {
     contextOptions.recordHar = { path: path.resolve(process.cwd(), options.saveHar), mode: 'minimal' };
@@ -477,14 +464,8 @@ async function launchContext(options: Options, headless: boolean, executablePath
     contextOptions.serviceWorkers = 'block';
   }
 
-  // Close app when the last window closes.
-
-  const context = await browser.newContext(contextOptions);
-
   let closingBrowser = false;
   async function closeBrowser() {
-    // We can come here multiple times. For example, saving storage creates
-    // a temporary page and we call closeBrowser again when that page closes.
     if (closingBrowser)
       return;
     closingBrowser = true;
@@ -498,12 +479,11 @@ async function launchContext(options: Options, headless: boolean, executablePath
   }
 
   context.on('page', page => {
-    page.on('dialog', () => {});  // Prevent dialogs from being automatically dismissed.
+    page.on('dialog', () => {});
     page.on('close', () => {
       const hasPage = browser.contexts().some(context => context.pages().length > 0);
       if (hasPage)
         return;
-      // Avoid the error when the last page is closed because the browser has been closed.
       closeBrowser().catch(e => null);
     });
   });
@@ -519,14 +499,12 @@ async function launchContext(options: Options, headless: boolean, executablePath
   if (options.saveTrace)
     await context.tracing.start({ screenshots: true, snapshots: true });
 
-  // Omit options that we add automatically for presentation purpose.
   delete launchOptions.headless;
   delete launchOptions.executablePath;
   delete launchOptions.handleSIGINT;
   delete contextOptions.deviceScaleFactor;
   return { browser, browserName: browserType.name(), context, contextOptions, launchOptions };
 }
-
 async function openPage(context: BrowserContext, url: string | undefined): Promise<Page> {
   const page = await context.newPage();
   if (url) {
