@@ -1,0 +1,17 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+      {
+        "type": "node",
+        "request": "launch",
+        "name": "Debug Playwright Codegen",
+        "skipFiles": ["<node_internals>/**"],
+        "program": "${workspaceFolder}/node_modules/@playwright/test/cli.js",
+        "args": ["codegen", "https://google.com/"],
+        "console": "integratedTerminal",
+        "env": {
+          "DEBUG": "playwright:codegen"
+        }
+      }
+    ]
+  }
